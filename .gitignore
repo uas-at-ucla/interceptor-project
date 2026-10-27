@@ -7,3 +7,6 @@ __pycache__/
 
 # Test / tooling caches
 .pytest_cache/
+
+# Calibration captures (large PNGs; calib.yaml is the result worth keeping)
+calib_images/

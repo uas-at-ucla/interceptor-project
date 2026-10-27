@@ -1,0 +1,11 @@
+[project]
+name = "interceptor-project"
+version = "0.1.0"
+description = "Software for the interceptor drone project"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    # aruco is part of plain opencv-python since 4.7; older builds need opencv-contrib-python
+    "numpy>=1.21",
+    "opencv-python>=4.7",
+]
