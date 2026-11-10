@@ -1,3 +1,6 @@
 __pycache__/
 *.py[cod]
 forces_log.csv
+build/
+install/
+log/

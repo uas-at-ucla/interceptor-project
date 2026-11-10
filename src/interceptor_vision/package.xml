@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>interceptor_vision</name>
+  <version>0.0.1</version>
+  <description>Combined vision and camera node skeleton.</description>
+  <maintainer email="maintainers@example.com">Interceptor Project Team</maintainer>
+  <license>TODO</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
