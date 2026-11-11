@@ -1,207 +1,116 @@
-// Manager node: turns high-level commands into MAVROS commands.
-//
-// Inputs
-//   /setpoint (geometry_msgs/msg/Point): position offset in metres, relative to
-//     the drone's current position. Axes depend on the `setpoint_frame` param:
-//       "local" (default): ENU, x east, y north, z up
-//       "body":            x forward, y left, z up (rotated by current yaw only)
-//
-// Behaviour
-//   - Streams a position target to MAVROS at `setpoint_rate_hz` once a local
-//     pose is available. With no active command it holds the current position,
-//     so switching to OFFBOARD never causes a jump.
-//   - On a /setpoint, latches target = current position + offset, keeping the
-//     current yaw. If `auto_engage` is true it then switches to OFFBOARD and arms.
-//   - If the vehicle leaves OFFBOARD (pilot takeover, failsafe) or disarms, the
-//     active command is dropped and the node stops trying to engage.
+// Manager node: flies the drone to a position relative to where it is now.
 //
 // Debug from a terminal:
-//   ros2 topic pub --once /setpoint geometry_msgs/msg/Point "{x: 0.0, y: 0.0, z: 3.0}"
+//   ros2 topic pub --once /setpoint geometry_msgs/msg/Point '{x: 0.0, y: 0.0, z: 3.0}'
+//
+// x = east, y = north, z = up (metres). See README.md.
 
 #include <chrono>
-#include <cmath>
 #include <memory>
 #include <optional>
-#include <string>
 
 #include "geometry_msgs/msg/point.hpp"
-#include "geometry_msgs/msg/pose.hpp"
-#include "interceptor_manager/mavros_interface.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
+#include "mavros_msgs/msg/state.hpp"
+#include "mavros_msgs/srv/command_bool.hpp"
+#include "mavros_msgs/srv/set_mode.hpp"
 #include "rclcpp/rclcpp.hpp"
 
-namespace interceptor_manager
-{
-
-namespace
-{
-
-double yaw_from_quaternion(const geometry_msgs::msg::Quaternion & q)
-{
-  return std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
-}
-
-geometry_msgs::msg::Quaternion quaternion_from_yaw(double yaw)
-{
-  geometry_msgs::msg::Quaternion q;
-  q.w = std::cos(yaw / 2.0);
-  q.z = std::sin(yaw / 2.0);
-  return q;
-}
-
-}  // namespace
+using namespace std::chrono_literals;
+using geometry_msgs::msg::Point;
+using geometry_msgs::msg::PoseStamped;
+using mavros_msgs::msg::State;
+using mavros_msgs::srv::CommandBool;
+using mavros_msgs::srv::SetMode;
 
 class ManagerNode : public rclcpp::Node
 {
 public:
   ManagerNode()
-  : Node("manager_node"),
-    setpoint_frame_(declare_parameter<std::string>("setpoint_frame", "local")),
-    auto_engage_(declare_parameter<bool>("auto_engage", true)),
-    max_offset_m_(declare_parameter<double>("max_offset_m", 50.0)),
-    mavros_(*this, declare_parameter<std::string>("mavros_ns", "/mavros"))
+  : Node("manager_node")
   {
-    if (setpoint_frame_ != "local" && setpoint_frame_ != "body") {
-      RCLCPP_WARN(
-        get_logger(), "Unknown setpoint_frame '%s', using 'local'", setpoint_frame_.c_str());
-      setpoint_frame_ = "local";
-    }
+    // Inputs
+    setpoint_sub_ = create_subscription<Point>(
+      "/setpoint", 10, [this](Point::SharedPtr msg) {on_setpoint(*msg);});
+    state_sub_ = create_subscription<State>(
+      "/mavros/state", 10, [this](State::SharedPtr msg) {state_ = *msg;});
+    pose_sub_ = create_subscription<PoseStamped>(
+      "/mavros/local_position/pose", rclcpp::SensorDataQoS(),
+      [this](PoseStamped::SharedPtr msg) {pose_ = msg;});
 
-    const double rate_hz = declare_parameter<double>("setpoint_rate_hz", 20.0);
+    // Outputs
+    target_pub_ = create_publisher<PoseStamped>("/mavros/setpoint_position/local", 10);
+    mode_client_ = create_client<SetMode>("/mavros/set_mode");
+    arm_client_ = create_client<CommandBool>("/mavros/cmd/arming");
 
-    setpoint_sub_ = create_subscription<geometry_msgs::msg::Point>(
-      "/setpoint", 10,
-      [this](geometry_msgs::msg::Point::ConstSharedPtr msg) {on_relative_setpoint(*msg);});
-
-    timer_ = create_wall_timer(
-      std::chrono::duration<double>(1.0 / rate_hz), [this]() {on_timer();});
-
-    RCLCPP_INFO(
-      get_logger(), "Manager ready: /setpoint offsets in '%s' frame, auto_engage=%s",
-      setpoint_frame_.c_str(), auto_engage_ ? "true" : "false");
+    stream_timer_ = create_wall_timer(50ms, [this]() {stream_target();});  // 20 Hz
+    engage_timer_ = create_wall_timer(1s, [this]() {engage();});
   }
 
 private:
-  void on_relative_setpoint(const geometry_msgs::msg::Point & offset)
+  void on_setpoint(const Point & offset)
   {
-    if (!std::isfinite(offset.x) || !std::isfinite(offset.y) || !std::isfinite(offset.z)) {
-      RCLCPP_WARN(get_logger(), "Rejected setpoint: non-finite value");
+    if (!pose_) {
+      RCLCPP_WARN(get_logger(), "No position from MAVROS yet; is it running?");
       return;
     }
-    const double norm = std::sqrt(offset.x * offset.x + offset.y * offset.y + offset.z * offset.z);
-    if (norm > max_offset_m_) {
-      RCLCPP_WARN(
-        get_logger(), "Rejected setpoint: offset %.2f m exceeds max_offset_m (%.2f m)",
-        norm, max_offset_m_);
-      return;
-    }
-    if (!mavros_.connected()) {
-      RCLCPP_WARN(get_logger(), "Rejected setpoint: FCU not connected");
-      return;
-    }
-    const auto & current = mavros_.local_pose();
-    if (!current) {
-      RCLCPP_WARN(get_logger(), "Rejected setpoint: no local position yet");
-      return;
-    }
-
-    const auto & position = current->pose.position;
-    const double yaw = yaw_from_quaternion(current->pose.orientation);
-
-    // Rotate the offset into the local ENU frame.
-    double dx = offset.x;
-    double dy = offset.y;
-    if (setpoint_frame_ == "body") {
-      dx = offset.x * std::cos(yaw) - offset.y * std::sin(yaw);
-      dy = offset.x * std::sin(yaw) + offset.y * std::cos(yaw);
-    }
-
-    geometry_msgs::msg::Pose target;
-    target.position.x = position.x + dx;
-    target.position.y = position.y + dy;
-    target.position.z = position.z + offset.z;
-    target.orientation = quaternion_from_yaw(yaw);
-    target_ = target;
-
+    target_ = *pose_;
+    target_->pose.position.x += offset.x;
+    target_->pose.position.y += offset.y;
+    target_->pose.position.z += offset.z;
     RCLCPP_INFO(
-      get_logger(), "New target (%.2f, %.2f, %.2f) [offset %.2f, %.2f, %.2f %s]",
-      target.position.x, target.position.y, target.position.z,
-      offset.x, offset.y, offset.z, setpoint_frame_.c_str());
+      get_logger(), "New target (%.2f, %.2f, %.2f)",
+      target_->pose.position.x, target_->pose.position.y, target_->pose.position.z);
   }
 
-  void on_timer()
+  // PX4 drops out of OFFBOARD if targets stop arriving, so send one every tick.
+  // Before the first setpoint, send the current position so switching to
+  // OFFBOARD doesn't make the drone jump.
+  void stream_target()
   {
-    const auto & current = mavros_.local_pose();
-    if (!current) {
-      return;  // Nothing sensible to stream until we know where we are.
+    if (!pose_) {
+      return;
     }
-
-    // Drop the command if someone else took control or the vehicle disarmed,
-    // so we don't fight the pilot or re-arm after landing.
-    if (target_ &&
-      ((was_offboard_ && !mavros_.in_offboard()) || (was_armed_ && !mavros_.armed())))
-    {
-      RCLCPP_WARN(
-        get_logger(), "Vehicle left OFFBOARD or disarmed (mode %s, %s); clearing target",
-        mavros_.mode().c_str(), mavros_.armed() ? "armed" : "disarmed");
-      target_.reset();
-    }
-    was_offboard_ = mavros_.in_offboard();
-    was_armed_ = mavros_.armed();
-
-    // In OFFBOARD with no command (e.g. switched in from a GCS): hold here.
-    if (!target_ && mavros_.in_offboard()) {
-      geometry_msgs::msg::Pose hold = current->pose;
-      hold.orientation = quaternion_from_yaw(yaw_from_quaternion(current->pose.orientation));
-      target_ = hold;
-    }
-
-    mavros_.send_position_target(target_ ? *target_ : current->pose);
-
-    if (target_ && auto_engage_) {
-      engage();
-    }
+    PoseStamped msg = target_ ? *target_ : *pose_;
+    msg.header.stamp = now();
+    target_pub_->publish(msg);
   }
 
-  // Get into OFFBOARD + armed, retrying at most once per second.
+  // Once there is a target, get into OFFBOARD and armed (retried every second).
   void engage()
   {
-    if (mavros_.in_offboard() && mavros_.armed()) {
+    if (!target_) {
       return;
     }
-    const auto now = this->now();
-    if (last_engage_attempt_ && (now - *last_engage_attempt_) < rclcpp::Duration::from_seconds(1.0)) {
-      return;
-    }
-    last_engage_attempt_ = now;
-
-    if (!mavros_.in_offboard()) {
-      mavros_.request_mode("OFFBOARD");
-    } else {
-      mavros_.request_arming(true);
+    if (state_.mode != "OFFBOARD") {
+      auto request = std::make_shared<SetMode::Request>();
+      request->custom_mode = "OFFBOARD";
+      mode_client_->async_send_request(request);
+    } else if (!state_.armed) {
+      auto request = std::make_shared<CommandBool::Request>();
+      request->value = true;
+      arm_client_->async_send_request(request);
     }
   }
 
-  std::string setpoint_frame_;
-  const bool auto_engage_;
-  const double max_offset_m_;
+  State state_;
+  PoseStamped::SharedPtr pose_;
+  std::optional<PoseStamped> target_;
 
-  MavrosInterface mavros_;
-
-  std::optional<geometry_msgs::msg::Pose> target_;
-  bool was_offboard_ = false;
-  bool was_armed_ = false;
-  std::optional<rclcpp::Time> last_engage_attempt_;
-
-  rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr setpoint_sub_;
-  rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp::Subscription<Point>::SharedPtr setpoint_sub_;
+  rclcpp::Subscription<State>::SharedPtr state_sub_;
+  rclcpp::Subscription<PoseStamped>::SharedPtr pose_sub_;
+  rclcpp::Publisher<PoseStamped>::SharedPtr target_pub_;
+  rclcpp::Client<SetMode>::SharedPtr mode_client_;
+  rclcpp::Client<CommandBool>::SharedPtr arm_client_;
+  rclcpp::TimerBase::SharedPtr stream_timer_;
+  rclcpp::TimerBase::SharedPtr engage_timer_;
 };
-
-}  // namespace interceptor_manager
 
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<interceptor_manager::ManagerNode>());
+  rclcpp::spin(std::make_shared<ManagerNode>());
   rclcpp::shutdown();
   return 0;
 }
