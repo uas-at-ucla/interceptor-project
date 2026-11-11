@@ -5,7 +5,7 @@ drone there through MAVROS (PX4 offboard mode).
 
 ## Run
 
-With MAVROS connected to PX4 (e.g. `ros2 launch interceptor_mavros_stub mavros_stub.launch.py`):
+With MAVROS connected to PX4 (e.g. `ros2 launch interceptor_bringup mavros.launch.py`):
 
 ```bash
 ros2 run interceptor_manager manager_node
