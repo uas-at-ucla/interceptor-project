@@ -3,14 +3,19 @@ project(interceptor_manager)
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(mavros_msgs REQUIRED)
 
-add_executable(manager_node src/manager_node.cpp)
+add_executable(manager_node
+  src/manager_node.cpp
+  src/mavros_interface.cpp
+)
+target_include_directories(manager_node PRIVATE include)
 target_compile_features(manager_node PUBLIC cxx_std_17)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(manager_node PRIVATE -Wall -Wextra -Wpedantic)
 endif()
-ament_target_dependencies(manager_node rclcpp std_msgs)
+ament_target_dependencies(manager_node rclcpp geometry_msgs mavros_msgs)
 
 install(TARGETS manager_node DESTINATION lib/${PROJECT_NAME})
 
