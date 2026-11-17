@@ -4,3 +4,6 @@ forces_log.csv
 build/
 install/
 log/
+
+# local recordings from tools/record_dataset.py; copy sessions worth keeping into data/
+datasets/

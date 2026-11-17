@@ -1,0 +1,25 @@
+{
+  "runs": [
+    {
+      "started": "2026-11-09T18:48:21",
+      "source": "camera:1:dshow",
+      "frame_size": [
+        3200,
+        1200
+      ],
+      "layout": "side_by_side_left_right",
+      "rectified": false,
+      "requested_fps": 60,
+      "save_rate": 10.0,
+      "format": "png",
+      "aruco_dict": "DICT_6X6_250",
+      "marker_mm": null,
+      "distance_m": 2.0,
+      "notes": "",
+      "opencv": "5.0.0",
+      "ended": "2026-11-09T18:52:32",
+      "frames_saved": 42,
+      "frames_dropped": 0
+    }
+  ]
+}
