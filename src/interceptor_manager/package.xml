@@ -2,13 +2,23 @@
 <package format="3">
   <name>interceptor_manager</name>
   <version>0.0.1</version>
-  <description>Manager node skeleton.</description>
+  <description>Manager node: the drone's state machine, sending position setpoints to MAVROS.</description>
   <maintainer email="maintainers@example.com">Interceptor Project Team</maintainer>
   <license>TODO</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+
   <depend>rclcpp</depend>
-  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>interceptor_msgs</depend>
+  <depend>mavros_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

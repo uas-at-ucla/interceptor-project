@@ -12,7 +12,10 @@
   <exec_depend>interceptor_vision</exec_depend>
   <exec_depend>interceptor_tracker</exec_depend>
   <exec_depend>interceptor_manager</exec_depend>
-  <exec_depend>interceptor_mavros_stub</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>mavros</exec_depend>
+  <exec_depend>mavros_msgs</exec_depend>
+  <exec_depend>rclpy</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
