@@ -25,10 +25,12 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "geometry_msgs/msg/point.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
+#include "interceptor_manager/manager_math.hpp"
 #include "interceptor_msgs/msg/target_data.hpp"
 #include "mavros_msgs/msg/position_target.hpp"
 #include "mavros_msgs/msg/state.hpp"
@@ -82,6 +84,10 @@ public:
     min_altitude_ = declare_parameter("min_altitude", 5.0);
     target_lost_timeout_ = declare_parameter("target_lost_timeout", 1.0);
     search_duration_ = declare_parameter("search_duration", 5.0);
+
+    sweep_waypoints_ = interceptor_manager::make_sweep_waypoints(
+      sweep_center_x_, sweep_center_y_, sweep_radius_, lane_spacing_, sweep_altitude_);
+    RCLCPP_INFO(get_logger(), "Sweep has %zu waypoints", sweep_waypoints_.size());
 
     mavros_state_sub_ = create_subscription<State>(
       "/mavros/state", 10, [this](State::SharedPtr msg) {mavros_state_ = *msg;});
@@ -141,9 +147,25 @@ private:
         }
         break;
 
+      case FlightState::SWEEP: {
+        const Point & waypoint = sweep_waypoints_[sweep_index_];
+        const Point & here = pose_->pose.position;
+        // Face the direction of travel; the camera points forward.
+        publish_setpoint(waypoint, std::atan2(waypoint.y - here.y, waypoint.x - here.x));
+        if (std::hypot(waypoint.x - here.x, waypoint.y - here.y, waypoint.z - here.z) <
+          waypoint_tolerance_)
+        {
+          // After the last waypoint, start the sweep over.
+          sweep_index_ = (sweep_index_ + 1) % sweep_waypoints_.size();
+          RCLCPP_INFO(
+            get_logger(), "Waypoint reached; heading to %zu/%zu",
+            sweep_index_ + 1, sweep_waypoints_.size());
+        }
+        break;
+      }
+
       // Later steps fill these in. Until then, hold the current position so
       // the setpoint stream never stops.
-      case FlightState::SWEEP:
       case FlightState::FOLLOW:
       case FlightState::SEARCH:
       case FlightState::INTERCEPT:
@@ -215,6 +237,11 @@ private:
   // Recorded on entering TAKEOFF.
   Point takeoff_point_;
   double takeoff_yaw_ = 0.0;
+
+  // Never reset, so the sweep resumes where it left off after a chase or a
+  // pilot takeover.
+  std::vector<Point> sweep_waypoints_;
+  size_t sweep_index_ = 0;
 
   rclcpp::Subscription<State>::SharedPtr mavros_state_sub_;
   rclcpp::Subscription<PoseStamped>::SharedPtr pose_sub_;

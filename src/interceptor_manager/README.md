@@ -39,6 +39,10 @@ comparable.
 - `TAKEOFF`: climbs straight up from where it entered the state to
   `sweep_altitude`, keeping its heading. Moves to `SWEEP` once within
   `waypoint_tolerance` of that altitude.
-- Every other state currently holds the current position; later steps fill
-  them in.
+- `SWEEP`: flies a snake pattern clipped to the search circle (lanes along x,
+  `lane_spacing` apart), facing the direction of travel. Repeats from the
+  start after the last waypoint. The current waypoint is kept across a pilot
+  takeover, so the sweep resumes where it left off.
+- `FOLLOW`, `SEARCH`, `INTERCEPT` currently hold the current position; later
+  steps fill them in.
 - Losing armed or OFFBOARD from any state returns to `WAIT_FOR_READY`.

@@ -22,6 +22,7 @@ ament_target_dependencies(manager_math geometry_msgs)
 add_executable(manager_node src/manager_node.cpp)
 ament_target_dependencies(manager_node
   rclcpp geometry_msgs interceptor_msgs mavros_msgs std_srvs tf2)
+target_link_libraries(manager_node manager_math)
 
 install(TARGETS manager_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
