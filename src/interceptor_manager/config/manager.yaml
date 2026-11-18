@@ -1,0 +1,14 @@
+# Manager node parameters. Units are meters and seconds.
+# Positions are in MAVROS's local ENU frame; (0, 0) is where the drone started.
+manager_node:
+  ros__parameters:
+    sweep_center_x: 0.0        # center of the search area
+    sweep_center_y: 0.0
+    sweep_radius: 152.4        # 500 ft, matching the sim
+    sweep_altitude: 20.0       # placeholder; team to tune
+    lane_spacing: 30.0         # placeholder; tune from camera detection range
+    waypoint_tolerance: 3.0    # distance at which a waypoint counts as reached
+    standoff_distance: 10.0    # following distance from the target
+    min_altitude: 5.0          # floor while following
+    target_lost_timeout: 1.0   # target is lost if last_seen is older than this
+    search_duration: 5.0       # time for one full spin before resuming the sweep
