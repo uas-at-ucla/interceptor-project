@@ -24,7 +24,11 @@ ament_target_dependencies(manager_node
   rclcpp geometry_msgs interceptor_msgs mavros_msgs std_srvs tf2)
 target_link_libraries(manager_node manager_math)
 
-install(TARGETS manager_node DESTINATION lib/${PROJECT_NAME})
+# Test tool only: stands in for the Tracker.
+add_executable(fake_target_node src/fake_target_node.cpp)
+ament_target_dependencies(fake_target_node rclcpp interceptor_msgs)
+
+install(TARGETS manager_node fake_target_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY config launch DESTINATION share/${PROJECT_NAME})
 
 if(BUILD_TESTING)

@@ -21,6 +21,18 @@ MAVROS stamps messages in wall time, so every node uses wall time. Any node
 that publishes `/target_data` must do the same, or `last_seen` won't be
 comparable.
 
+## Fake target (test tool)
+
+`fake_target_node` stands in for the Tracker. It publishes `/target_data` at
+10 Hz for a target flying a circle (defaults: center (20, 20), radius 15 m,
+altitude 10 m, speed 3 m/s; all are parameters).
+
+```bash
+ros2 run interceptor_manager fake_target_node
+ros2 param set /fake_target_node visible false   # freezes last_seen: target "lost"
+ros2 param set /fake_target_node visible true
+```
+
 ## Interfaces
 
 | Direction | Topic / Service | Type |
