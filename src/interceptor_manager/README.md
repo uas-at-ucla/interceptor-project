@@ -36,6 +36,9 @@ comparable.
 - Publishes nothing until the first pose arrives from MAVROS.
 - `WAIT_FOR_READY`: holds the current position and yaw. Moves to `TAKEOFF`
   once MAVROS is connected and the drone is armed and in OFFBOARD.
-- Every other state currently holds the current position too; later steps
-  fill them in.
+- `TAKEOFF`: climbs straight up from where it entered the state to
+  `sweep_altitude`, keeping its heading. Moves to `SWEEP` once within
+  `waypoint_tolerance` of that altitude.
+- Every other state currently holds the current position; later steps fill
+  them in.
 - Losing armed or OFFBOARD from any state returns to `WAIT_FOR_READY`.

@@ -21,6 +21,7 @@
 // in interceptor_bringup does that.
 
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <optional>
 #include <string>
@@ -125,13 +126,23 @@ private:
         // Hold wherever the drone is now, so switching into OFFBOARD causes no jump.
         publish_setpoint(pose_->pose.position, current_yaw());
         if (mavros_state_.connected && armed_and_offboard()) {
+          // Climb straight up from wherever we are, keeping the current heading.
+          takeoff_point_ = pose_->pose.position;
+          takeoff_point_.z = sweep_altitude_;
+          takeoff_yaw_ = current_yaw();
           change_state(FlightState::TAKEOFF, "armed and in OFFBOARD");
+        }
+        break;
+
+      case FlightState::TAKEOFF:
+        publish_setpoint(takeoff_point_, takeoff_yaw_);
+        if (std::abs(pose_->pose.position.z - sweep_altitude_) < waypoint_tolerance_) {
+          change_state(FlightState::SWEEP, "reached sweep altitude");
         }
         break;
 
       // Later steps fill these in. Until then, hold the current position so
       // the setpoint stream never stops.
-      case FlightState::TAKEOFF:
       case FlightState::SWEEP:
       case FlightState::FOLLOW:
       case FlightState::SEARCH:
@@ -200,6 +211,10 @@ private:
   TargetData::SharedPtr target_;
 
   FlightState state_ = FlightState::WAIT_FOR_READY;
+
+  // Recorded on entering TAKEOFF.
+  Point takeoff_point_;
+  double takeoff_yaw_ = 0.0;
 
   rclcpp::Subscription<State>::SharedPtr mavros_state_sub_;
   rclcpp::Subscription<PoseStamped>::SharedPtr pose_sub_;
