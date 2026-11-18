@@ -19,9 +19,4 @@ def generate_launch_description():
             executable="manager_node",
             output="screen",
         ),
-        Node(
-            package="interceptor_mavros_stub",
-            executable="mavros_stub_node",
-            output="screen",
-        ),
     ])
