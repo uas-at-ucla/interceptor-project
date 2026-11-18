@@ -183,15 +183,36 @@ private:
         // Face the target so the camera keeps it in view.
         publish_setpoint(standoff, std::atan2(target.y - here.y, target.x - here.x), velocity);
         if (!target_fresh()) {
+          // Spin in place here; we're already near where the target was last seen.
+          search_point_ = here;
+          search_start_yaw_ = current_yaw();
+          search_start_time_ = now();
           change_state(FlightState::SEARCH, "target lost");
         }
         break;
       }
 
-      // Later steps fill these in. Until then, hold the current position so
-      // the setpoint stream never stops.
-      case FlightState::SEARCH:
+      case FlightState::SEARCH: {
+        const double elapsed = (now() - search_start_time_).seconds();
+        // One full turn over search_duration. A moving yaw setpoint keeps every
+        // state on the same publish helper, with no separate yaw-rate mode.
+        const double yaw = std::remainder(
+          search_start_yaw_ + elapsed * 2.0 * M_PI / search_duration_, 2.0 * M_PI);
+        publish_setpoint(search_point_, yaw);
+        if (target_fresh()) {
+          change_state(FlightState::FOLLOW, "target seen again");
+        } else if (elapsed >= search_duration_) {
+          // sweep_index_ was kept, so this flies straight to the waypoint we
+          // were heading to before the chase.
+          change_state(FlightState::SWEEP, "search finished, no target");
+        }
+        break;
+      }
+
       case FlightState::INTERCEPT:
+        // Phase 3 placeholder: nothing enters this state yet.
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 5000, "INTERCEPT is not implemented; holding position");
         publish_setpoint(pose_->pose.position, current_yaw());
         break;
     }
@@ -276,6 +297,11 @@ private:
   // pilot takeover.
   std::vector<Point> sweep_waypoints_;
   size_t sweep_index_ = 0;
+
+  // Recorded on entering SEARCH.
+  Point search_point_;
+  double search_start_yaw_ = 0.0;
+  rclcpp::Time search_start_time_;
 
   rclcpp::Subscription<State>::SharedPtr mavros_state_sub_;
   rclcpp::Subscription<PoseStamped>::SharedPtr pose_sub_;

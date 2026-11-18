@@ -62,6 +62,9 @@ ros2 param set /fake_target_node visible true
   the target, with the target's velocity as feedforward (vertical part dropped
   while the altitude floor is active). Switches to `SEARCH`
   when the target is no longer fresh.
-- `SEARCH`, `INTERCEPT` currently hold the current position; later steps fill
-  them in.
+- `SEARCH`: holds the position where the target was lost and turns one full
+  rotation over `search_duration`. Goes back to `FOLLOW` if the target becomes
+  fresh again; otherwise resumes `SWEEP` at the waypoint it was heading to.
+- `INTERCEPT`: Phase 3 placeholder. Nothing enters it; if reached, it holds
+  the current position and logs a warning.
 - Losing armed or OFFBOARD from any state returns to `WAIT_FOR_READY`.
