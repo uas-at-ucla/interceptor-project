@@ -161,12 +161,35 @@ private:
             get_logger(), "Waypoint reached; heading to %zu/%zu",
             sweep_index_ + 1, sweep_waypoints_.size());
         }
+        // sweep_index_ is kept, so the sweep resumes here after the chase.
+        if (target_fresh()) {
+          change_state(FlightState::FOLLOW, "target seen");
+        }
+        break;
+      }
+
+      case FlightState::FOLLOW: {
+        const Point & target = target_->position;
+        const Point & here = pose_->pose.position;
+        const Point standoff = interceptor_manager::standoff_point(
+          target, here, standoff_distance_, min_altitude_);
+        // Feed forward the target's velocity so the drone keeps pace instead of
+        // lagging behind. When the altitude floor is holding us above the
+        // target, drop the vertical part: it would fight the fixed altitude.
+        Vector3 velocity = target_->velocity;
+        if (target.z < min_altitude_) {
+          velocity.z = 0.0;
+        }
+        // Face the target so the camera keeps it in view.
+        publish_setpoint(standoff, std::atan2(target.y - here.y, target.x - here.x), velocity);
+        if (!target_fresh()) {
+          change_state(FlightState::SEARCH, "target lost");
+        }
         break;
       }
 
       // Later steps fill these in. Until then, hold the current position so
       // the setpoint stream never stops.
-      case FlightState::FOLLOW:
       case FlightState::SEARCH:
       case FlightState::INTERCEPT:
         publish_setpoint(pose_->pose.position, current_yaw());
@@ -177,6 +200,17 @@ private:
   bool armed_and_offboard() const
   {
     return mavros_state_.armed && mavros_state_.mode == "OFFBOARD";
+  }
+
+  // The Tracker updates last_seen only on real detections, so a stale
+  // last_seen means the target is lost. A crashed Tracker looks the same.
+  bool target_fresh() const
+  {
+    if (!target_) {
+      return false;
+    }
+    const rclcpp::Time last_seen(target_->last_seen, get_clock()->get_clock_type());
+    return (now() - last_seen).seconds() < target_lost_timeout_;
   }
 
   void change_state(FlightState next, const std::string & reason)

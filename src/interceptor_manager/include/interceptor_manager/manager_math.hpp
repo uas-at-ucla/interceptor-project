@@ -23,4 +23,15 @@ namespace interceptor_manager
 std::vector<geometry_msgs::msg::Point> make_sweep_waypoints(
   double center_x, double center_y, double radius, double lane_spacing, double altitude);
 
+// Where to hold while following a target.
+//
+// Horizontally: standoff_distance from the target, on the side the drone is
+// already on (along the horizontal line from the target toward the drone).
+// If the drone is almost directly above or below the target (under 0.1 m
+// apart horizontally), that line is undefined, so it uses the +x direction.
+// Vertically: the target's altitude, but never below min_altitude.
+geometry_msgs::msg::Point standoff_point(
+  const geometry_msgs::msg::Point & target, const geometry_msgs::msg::Point & drone,
+  double standoff_distance, double min_altitude);
+
 }  // namespace interceptor_manager

@@ -55,6 +55,13 @@ ros2 param set /fake_target_node visible true
   `lane_spacing` apart), facing the direction of travel. Repeats from the
   start after the last waypoint. The current waypoint is kept across a pilot
   takeover, so the sweep resumes where it left off.
-- `FOLLOW`, `SEARCH`, `INTERCEPT` currently hold the current position; later
-  steps fill them in.
+  Switches to `FOLLOW` as soon as the target is fresh (`last_seen` newer than
+  `target_lost_timeout`).
+- `FOLLOW`: holds `standoff_distance` from the target on the side the drone is
+  already on, at the target's altitude (never below `min_altitude`), facing
+  the target, with the target's velocity as feedforward (vertical part dropped
+  while the altitude floor is active). Switches to `SEARCH`
+  when the target is no longer fresh.
+- `SEARCH`, `INTERCEPT` currently hold the current position; later steps fill
+  them in.
 - Losing armed or OFFBOARD from any state returns to `WAIT_FOR_READY`.

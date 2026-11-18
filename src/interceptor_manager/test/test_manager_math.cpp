@@ -5,6 +5,16 @@
 #include "interceptor_manager/manager_math.hpp"
 
 using interceptor_manager::make_sweep_waypoints;
+using interceptor_manager::standoff_point;
+
+geometry_msgs::msg::Point make_point(double x, double y, double z)
+{
+  geometry_msgs::msg::Point p;
+  p.x = x;
+  p.y = y;
+  p.z = z;
+  return p;
+}
 
 TEST(SweepWaypoints, AllInsideOrOnCircle)
 {
@@ -45,4 +55,24 @@ TEST(SweepWaypoints, LaneCountForSimpleCase)
     EXPECT_DOUBLE_EQ(waypoints[2 * lane].y, expected_y[lane]);
     EXPECT_DOUBLE_EQ(waypoints[2 * lane + 1].y, expected_y[lane]);
   }
+}
+
+TEST(StandoffPoint, SameSideAtTargetAltitudeWithFloor)
+{
+  // Drone 3-4-5 away from the target: hold 10 m out along that line, at the
+  // target's altitude.
+  auto p = standoff_point(make_point(1.0, 2.0, 12.0), make_point(4.0, 6.0, 30.0), 10.0, 5.0);
+  EXPECT_DOUBLE_EQ(p.x, 1.0 + 6.0);
+  EXPECT_DOUBLE_EQ(p.y, 2.0 + 8.0);
+  EXPECT_DOUBLE_EQ(p.z, 12.0);
+
+  // Target below the floor: altitude is clamped to min_altitude.
+  p = standoff_point(make_point(0.0, 0.0, 2.0), make_point(20.0, 0.0, 15.0), 10.0, 5.0);
+  EXPECT_DOUBLE_EQ(p.x, 10.0);
+  EXPECT_DOUBLE_EQ(p.z, 5.0);
+
+  // Drone directly above the target: falls back to the +x direction.
+  p = standoff_point(make_point(3.0, 3.0, 10.0), make_point(3.0, 3.0, 25.0), 10.0, 5.0);
+  EXPECT_DOUBLE_EQ(p.x, 13.0);
+  EXPECT_DOUBLE_EQ(p.y, 3.0);
 }

@@ -37,4 +37,24 @@ std::vector<geometry_msgs::msg::Point> make_sweep_waypoints(
   return waypoints;
 }
 
+geometry_msgs::msg::Point standoff_point(
+  const geometry_msgs::msg::Point & target, const geometry_msgs::msg::Point & drone,
+  double standoff_distance, double min_altitude)
+{
+  double dx = drone.x - target.x;
+  double dy = drone.y - target.y;
+  double distance = std::hypot(dx, dy);
+  if (distance < 0.1) {
+    dx = 1.0;
+    dy = 0.0;
+    distance = 1.0;
+  }
+
+  geometry_msgs::msg::Point point;
+  point.x = target.x + standoff_distance * dx / distance;
+  point.y = target.y + standoff_distance * dy / distance;
+  point.z = std::max(target.z, min_altitude);
+  return point;
+}
+
 }  // namespace interceptor_manager
