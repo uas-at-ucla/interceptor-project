@@ -9,11 +9,9 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
-  <depend>builtin_interfaces</depend>
   <depend>geometry_msgs</depend>
   <depend>interceptor_msgs</depend>
   <depend>mavros_msgs</depend>
-  <depend>std_msgs</depend>
   <depend>std_srvs</depend>
   <depend>tf2</depend>
 

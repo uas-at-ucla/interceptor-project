@@ -66,5 +66,6 @@ ros2 param set /fake_target_node visible true
   rotation over `search_duration`. Goes back to `FOLLOW` if the target becomes
   fresh again; otherwise resumes `SWEEP` at the waypoint it was heading to.
 - `INTERCEPT`: Phase 3 placeholder. Nothing enters it; if reached, it holds
-  the current position and logs a warning.
-- Losing armed or OFFBOARD from any state returns to `WAIT_FOR_READY`.
+  the position where it entered the state and logs a warning.
+- Losing the MAVROS connection, armed, or OFFBOARD from any state returns to
+  `WAIT_FOR_READY`.

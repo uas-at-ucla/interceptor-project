@@ -4,8 +4,11 @@
 
 #include "interceptor_manager/manager_math.hpp"
 
+using interceptor_manager::distance;
 using interceptor_manager::make_sweep_waypoints;
 using interceptor_manager::standoff_point;
+using interceptor_manager::standoff_velocity;
+using interceptor_manager::yaw_toward;
 
 geometry_msgs::msg::Point make_point(double x, double y, double z)
 {
@@ -75,4 +78,27 @@ TEST(StandoffPoint, SameSideAtTargetAltitudeWithFloor)
   p = standoff_point(make_point(3.0, 3.0, 10.0), make_point(3.0, 3.0, 25.0), 10.0, 5.0);
   EXPECT_DOUBLE_EQ(p.x, 13.0);
   EXPECT_DOUBLE_EQ(p.y, 3.0);
+}
+
+TEST(StandoffVelocity, DropsVerticalOnlyBelowFloor)
+{
+  geometry_msgs::msg::Vector3 target_velocity;
+  target_velocity.x = 2.0;
+  target_velocity.z = 1.5;
+
+  auto v = standoff_velocity(target_velocity, 10.0, 5.0);  // above the floor
+  EXPECT_DOUBLE_EQ(v.x, 2.0);
+  EXPECT_DOUBLE_EQ(v.z, 1.5);
+
+  v = standoff_velocity(target_velocity, 2.0, 5.0);  // below the floor
+  EXPECT_DOUBLE_EQ(v.x, 2.0);
+  EXPECT_DOUBLE_EQ(v.z, 0.0);
+}
+
+TEST(SmallHelpers, DistanceAndYawToward)
+{
+  EXPECT_DOUBLE_EQ(distance(make_point(1.0, 2.0, 3.0), make_point(3.0, 5.0, 9.0)), 7.0);
+  // ENU: east is 0, north is +pi/2; altitude is ignored.
+  EXPECT_DOUBLE_EQ(yaw_toward(make_point(0.0, 0.0, 0.0), make_point(5.0, 0.0, 9.0)), 0.0);
+  EXPECT_DOUBLE_EQ(yaw_toward(make_point(1.0, 1.0, 0.0), make_point(1.0, 4.0, 0.0)), M_PI / 2);
 }

@@ -6,6 +6,16 @@
 namespace interceptor_manager
 {
 
+double distance(const geometry_msgs::msg::Point & a, const geometry_msgs::msg::Point & b)
+{
+  return std::hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+}
+
+double yaw_toward(const geometry_msgs::msg::Point & from, const geometry_msgs::msg::Point & to)
+{
+  return std::atan2(to.y - from.y, to.x - from.x);
+}
+
 std::vector<geometry_msgs::msg::Point> make_sweep_waypoints(
   double center_x, double center_y, double radius, double lane_spacing, double altitude)
 {
@@ -43,18 +53,29 @@ geometry_msgs::msg::Point standoff_point(
 {
   double dx = drone.x - target.x;
   double dy = drone.y - target.y;
-  double distance = std::hypot(dx, dy);
-  if (distance < 0.1) {
+  double horizontal_distance = std::hypot(dx, dy);
+  if (horizontal_distance < 0.1) {
     dx = 1.0;
     dy = 0.0;
-    distance = 1.0;
+    horizontal_distance = 1.0;
   }
 
   geometry_msgs::msg::Point point;
-  point.x = target.x + standoff_distance * dx / distance;
-  point.y = target.y + standoff_distance * dy / distance;
+  point.x = target.x + standoff_distance * dx / horizontal_distance;
+  point.y = target.y + standoff_distance * dy / horizontal_distance;
   point.z = std::max(target.z, min_altitude);
   return point;
+}
+
+geometry_msgs::msg::Vector3 standoff_velocity(
+  const geometry_msgs::msg::Vector3 & target_velocity, double target_altitude,
+  double min_altitude)
+{
+  geometry_msgs::msg::Vector3 velocity = target_velocity;
+  if (target_altitude < min_altitude) {
+    velocity.z = 0.0;
+  }
+  return velocity;
 }
 
 }  // namespace interceptor_manager

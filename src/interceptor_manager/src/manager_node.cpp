@@ -13,8 +13,8 @@
 //   SEARCH --(search_duration with no target)--> SWEEP
 //   INTERCEPT: placeholder for Phase 3; nothing enters it yet.
 //
-// From any state, losing armed or OFFBOARD (for example, the safety pilot
-// takes over) returns to WAIT_FOR_READY. That state holds the current
+// From any state, losing the MAVROS link, armed, or OFFBOARD (for example,
+// the safety pilot takes over) returns to WAIT_FOR_READY. That state holds the current
 // position, so re-entering OFFBOARD never pulls the drone toward an old target.
 //
 // The manager never arms the drone or changes its flight mode. The arm script
@@ -74,11 +74,11 @@ public:
   : Node("manager_node")
   {
     // Read once at startup. config/manager.yaml describes each one.
-    sweep_center_x_ = declare_parameter("sweep_center_x", 0.0);
-    sweep_center_y_ = declare_parameter("sweep_center_y", 0.0);
-    sweep_radius_ = declare_parameter("sweep_radius", 152.4);
+    const double sweep_center_x = declare_parameter("sweep_center_x", 0.0);
+    const double sweep_center_y = declare_parameter("sweep_center_y", 0.0);
+    const double sweep_radius = declare_parameter("sweep_radius", 152.4);
+    const double lane_spacing = declare_parameter("lane_spacing", 30.0);
     sweep_altitude_ = declare_parameter("sweep_altitude", 20.0);
-    lane_spacing_ = declare_parameter("lane_spacing", 30.0);
     waypoint_tolerance_ = declare_parameter("waypoint_tolerance", 3.0);
     standoff_distance_ = declare_parameter("standoff_distance", 10.0);
     min_altitude_ = declare_parameter("min_altitude", 5.0);
@@ -86,7 +86,7 @@ public:
     search_duration_ = declare_parameter("search_duration", 5.0);
 
     sweep_waypoints_ = interceptor_manager::make_sweep_waypoints(
-      sweep_center_x_, sweep_center_y_, sweep_radius_, lane_spacing_, sweep_altitude_);
+      sweep_center_x, sweep_center_y, sweep_radius, lane_spacing, sweep_altitude_);
     RCLCPP_INFO(get_logger(), "Sweep has %zu waypoints", sweep_waypoints_.size());
 
     mavros_state_sub_ = create_subscription<State>(
@@ -121,47 +121,46 @@ private:
       return;
     }
 
-    if (state_ != FlightState::WAIT_FOR_READY && !armed_and_offboard()) {
+    if (state_ != FlightState::WAIT_FOR_READY && !ready_to_fly()) {
       change_state(
         FlightState::WAIT_FOR_READY,
-        mavros_state_.armed ? "left OFFBOARD (mode " + mavros_state_.mode + ")" : "disarmed");
+        !mavros_state_.connected ? "MAVROS lost connection to PX4" :
+        !mavros_state_.armed ? "disarmed" :
+        "left OFFBOARD (mode " + mavros_state_.mode + ")");
     }
 
     switch (state_) {
       case FlightState::WAIT_FOR_READY:
         // Hold wherever the drone is now, so switching into OFFBOARD causes no jump.
         publish_setpoint(pose_->pose.position, current_yaw());
-        if (mavros_state_.connected && armed_and_offboard()) {
-          // Climb straight up from wherever we are, keeping the current heading.
-          takeoff_point_ = pose_->pose.position;
-          takeoff_point_.z = sweep_altitude_;
-          takeoff_yaw_ = current_yaw();
+        if (ready_to_fly()) {
           change_state(FlightState::TAKEOFF, "armed and in OFFBOARD");
         }
         break;
 
-      case FlightState::TAKEOFF:
-        publish_setpoint(takeoff_point_, takeoff_yaw_);
+      case FlightState::TAKEOFF: {
+        // Climb straight up from where we started, keeping that heading.
+        Point climb_to = entry_point_;
+        climb_to.z = sweep_altitude_;
+        publish_setpoint(climb_to, entry_yaw_);
         if (std::abs(pose_->pose.position.z - sweep_altitude_) < waypoint_tolerance_) {
           change_state(FlightState::SWEEP, "reached sweep altitude");
         }
         break;
+      }
 
       case FlightState::SWEEP: {
         const Point & waypoint = sweep_waypoints_[sweep_index_];
         const Point & here = pose_->pose.position;
         // Face the direction of travel; the camera points forward.
-        publish_setpoint(waypoint, std::atan2(waypoint.y - here.y, waypoint.x - here.x));
-        if (std::hypot(waypoint.x - here.x, waypoint.y - here.y, waypoint.z - here.z) <
-          waypoint_tolerance_)
-        {
+        publish_setpoint(waypoint, interceptor_manager::yaw_toward(here, waypoint));
+        if (interceptor_manager::distance(here, waypoint) < waypoint_tolerance_) {
           // After the last waypoint, start the sweep over.
           sweep_index_ = (sweep_index_ + 1) % sweep_waypoints_.size();
           RCLCPP_INFO(
             get_logger(), "Waypoint reached; heading to %zu/%zu",
             sweep_index_ + 1, sweep_waypoints_.size());
         }
-        // sweep_index_ is kept, so the sweep resumes here after the chase.
         if (target_fresh()) {
           change_state(FlightState::FOLLOW, "target seen");
         }
@@ -171,39 +170,29 @@ private:
       case FlightState::FOLLOW: {
         const Point & target = target_->position;
         const Point & here = pose_->pose.position;
-        const Point standoff = interceptor_manager::standoff_point(
-          target, here, standoff_distance_, min_altitude_);
-        // Feed forward the target's velocity so the drone keeps pace instead of
-        // lagging behind. When the altitude floor is holding us above the
-        // target, drop the vertical part: it would fight the fixed altitude.
-        Vector3 velocity = target_->velocity;
-        if (target.z < min_altitude_) {
-          velocity.z = 0.0;
-        }
         // Face the target so the camera keeps it in view.
-        publish_setpoint(standoff, std::atan2(target.y - here.y, target.x - here.x), velocity);
+        publish_setpoint(
+          interceptor_manager::standoff_point(target, here, standoff_distance_, min_altitude_),
+          interceptor_manager::yaw_toward(here, target),
+          interceptor_manager::standoff_velocity(target_->velocity, target.z, min_altitude_));
         if (!target_fresh()) {
-          // Spin in place here; we're already near where the target was last seen.
-          search_point_ = here;
-          search_start_yaw_ = current_yaw();
-          search_start_time_ = now();
           change_state(FlightState::SEARCH, "target lost");
         }
         break;
       }
 
       case FlightState::SEARCH: {
-        const double elapsed = (now() - search_start_time_).seconds();
-        // One full turn over search_duration. A moving yaw setpoint keeps every
-        // state on the same publish helper, with no separate yaw-rate mode.
+        // Spin in place where the target was lost; we're already near where it
+        // was last seen. One full turn over search_duration. A moving yaw
+        // setpoint keeps every state on the same publish helper, with no
+        // separate yaw-rate mode.
+        const double elapsed = (now() - entry_time_).seconds();
         const double yaw = std::remainder(
-          search_start_yaw_ + elapsed * 2.0 * M_PI / search_duration_, 2.0 * M_PI);
-        publish_setpoint(search_point_, yaw);
+          entry_yaw_ + elapsed * 2.0 * M_PI / search_duration_, 2.0 * M_PI);
+        publish_setpoint(entry_point_, yaw);
         if (target_fresh()) {
           change_state(FlightState::FOLLOW, "target seen again");
         } else if (elapsed >= search_duration_) {
-          // sweep_index_ was kept, so this flies straight to the waypoint we
-          // were heading to before the chase.
           change_state(FlightState::SWEEP, "search finished, no target");
         }
         break;
@@ -213,14 +202,15 @@ private:
         // Phase 3 placeholder: nothing enters this state yet.
         RCLCPP_WARN_THROTTLE(
           get_logger(), *get_clock(), 5000, "INTERCEPT is not implemented; holding position");
-        publish_setpoint(pose_->pose.position, current_yaw());
+        publish_setpoint(entry_point_, entry_yaw_);
         break;
     }
   }
 
-  bool armed_and_offboard() const
+  // One check for both entering and leaving WAIT_FOR_READY, so they can't disagree.
+  bool ready_to_fly() const
   {
-    return mavros_state_.armed && mavros_state_.mode == "OFFBOARD";
+    return mavros_state_.connected && mavros_state_.armed && mavros_state_.mode == "OFFBOARD";
   }
 
   // The Tracker updates last_seen only on real detections, so a stale
@@ -239,6 +229,12 @@ private:
     RCLCPP_INFO(
       get_logger(), "%s -> %s: %s", to_string(state_), to_string(next), reason.c_str());
     state_ = next;
+    // TAKEOFF, SEARCH, and INTERCEPT all work from where the drone was, and
+    // which way it faced, when the state began. Recording it here means no
+    // state has to remember to do it.
+    entry_point_ = pose_->pose.position;
+    entry_yaw_ = current_yaw();
+    entry_time_ = now();
   }
 
   // Values are ENU even though coordinate_frame says FRAME_LOCAL_NED. That's a
@@ -254,9 +250,7 @@ private:
     msg.position = position;
     msg.yaw = static_cast<float>(yaw);
     if (velocity) {
-      // Feedforward: PX4 adds this to its position control, so the drone keeps
-      // pace with a moving point instead of lagging behind it.
-      msg.velocity = *velocity;
+      msg.velocity = *velocity;  // feedforward on top of PX4's position control
     } else {
       msg.type_mask |= PositionTarget::IGNORE_VX | PositionTarget::IGNORE_VY |
         PositionTarget::IGNORE_VZ;
@@ -270,12 +264,8 @@ private:
     return tf2::getYaw(tf2::Quaternion(q.x, q.y, q.z, q.w));
   }
 
-  // Parameters
-  double sweep_center_x_;
-  double sweep_center_y_;
-  double sweep_radius_;
+  // Parameters used after startup
   double sweep_altitude_;
-  double lane_spacing_;
   double waypoint_tolerance_;
   double standoff_distance_;
   double min_altitude_;
@@ -289,19 +279,15 @@ private:
 
   FlightState state_ = FlightState::WAIT_FOR_READY;
 
-  // Recorded on entering TAKEOFF.
-  Point takeoff_point_;
-  double takeoff_yaw_ = 0.0;
+  // Pose and time when the current state began; set by change_state().
+  Point entry_point_;
+  double entry_yaw_ = 0.0;
+  rclcpp::Time entry_time_;
 
-  // Never reset, so the sweep resumes where it left off after a chase or a
-  // pilot takeover.
+  // Never reset, so after a chase or a pilot takeover the drone flies straight
+  // to the waypoint it was heading to.
   std::vector<Point> sweep_waypoints_;
   size_t sweep_index_ = 0;
-
-  // Recorded on entering SEARCH.
-  Point search_point_;
-  double search_start_yaw_ = 0.0;
-  rclcpp::Time search_start_time_;
 
   rclcpp::Subscription<State>::SharedPtr mavros_state_sub_;
   rclcpp::Subscription<PoseStamped>::SharedPtr pose_sub_;

@@ -6,9 +6,17 @@
 #include <vector>
 
 #include "geometry_msgs/msg/point.hpp"
+#include "geometry_msgs/msg/vector3.hpp"
 
 namespace interceptor_manager
 {
+
+// Straight-line (3D) distance between two points.
+double distance(const geometry_msgs::msg::Point & a, const geometry_msgs::msg::Point & b);
+
+// Yaw (radians, ENU: 0 = east, counterclockwise) that faces from `from`
+// toward `to` in the horizontal plane.
+double yaw_toward(const geometry_msgs::msg::Point & from, const geometry_msgs::msg::Point & to);
 
 // Snake ("lawnmower") sweep over a circular search area, at a fixed altitude.
 //
@@ -33,5 +41,13 @@ std::vector<geometry_msgs::msg::Point> make_sweep_waypoints(
 geometry_msgs::msg::Point standoff_point(
   const geometry_msgs::msg::Point & target, const geometry_msgs::msg::Point & drone,
   double standoff_distance, double min_altitude);
+
+// Velocity feedforward to use with standoff_point: the target's velocity, so
+// the drone keeps pace instead of lagging behind. When the target is below
+// min_altitude, the standoff point is pinned to the floor, so the vertical
+// part is dropped; it would fight the fixed altitude.
+geometry_msgs::msg::Vector3 standoff_velocity(
+  const geometry_msgs::msg::Vector3 & target_velocity, double target_altitude,
+  double min_altitude);
 
 }  // namespace interceptor_manager
